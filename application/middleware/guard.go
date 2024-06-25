@@ -4,190 +4,193 @@ import (
 	"antrein/dd-dashboard-auth/model/config"
 	"antrein/dd-dashboard-auth/model/dto"
 	"antrein/dd-dashboard-auth/model/entity"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
-	jwtware "github.com/gofiber/contrib/jwt"
-
-	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
 )
 
 type GuardContext struct {
-	FiberCtx *fiber.Ctx
+	ResponseWriter http.ResponseWriter
+	Request        *http.Request
 }
 
 type AuthGuardContext struct {
-	FiberCtx *fiber.Ctx
-	Claims   entity.JWTClaim
+	ResponseWriter http.ResponseWriter
+	Request        *http.Request
+	Claims         entity.JWTClaim
 }
 
-var statusErrorMap = map[int]string{
-	400: "Bad Request",
-	401: "Unauthorized",
-	403: "Forbidden",
-	404: "Not Found",
-	500: "Internal Server Error",
-	503: "Service Unavailable",
-}
-
-func (g *GuardContext) ReturnError(
-	status int,
-	err string,
-	detail ...any,
-) error {
-	if status == http.StatusInternalServerError {
-		fmt.Println("error", err)
-	}
-
-	response := dto.DefaultResponse{
+func (g *GuardContext) ReturnError(status int, message string) error {
+	g.ResponseWriter.WriteHeader(status)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  status,
-		Message: statusErrorMap[status],
-		Error:   err,
-	}
-
-	if len(detail) > 0 {
-		response.Data = detail[0]
-	}
-
-	return g.FiberCtx.Status(status).JSON(response)
+		Message: message,
+	})
 }
 
-func (g *GuardContext) ReturnSuccess(
-	data interface{},
-) error {
-	return g.FiberCtx.Status(http.StatusOK).JSON(dto.DefaultResponse{
+func (g *GuardContext) ReturnSuccess(data interface{}) error {
+	g.ResponseWriter.WriteHeader(http.StatusOK)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  http.StatusOK,
 		Message: "OK",
 		Data:    data,
 	})
 }
 
-func (g *GuardContext) ReturnCreated(
-	data interface{},
-) error {
-	return g.FiberCtx.Status(http.StatusCreated).JSON(dto.DefaultResponse{
+func (g *GuardContext) ReturnCreated(data interface{}) error {
+	g.ResponseWriter.WriteHeader(http.StatusOK)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  http.StatusCreated,
 		Message: "Created",
 		Data:    data,
 	})
 }
 
-func (g *GuardContext) ReturnHTML(htmlContent string) error {
-	g.FiberCtx.Set("Content-Type", "text/html; charset=utf-8")
-	return g.FiberCtx.Status(http.StatusOK).SendString(htmlContent)
-}
-
-func (g *AuthGuardContext) ReturnError(
-	status int,
-	err string,
-	detail ...any,
-) error {
-	if status == http.StatusInternalServerError {
-		fmt.Println("error", err)
+func (g *GuardContext) ReturnEvent(data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
 	}
 
-	response := dto.DefaultResponse{
+	_, err = fmt.Fprintf(g.ResponseWriter, "data: %s\n\n", jsonData)
+	if err != nil {
+		return err // Handle writing errors
+	}
+
+	if flusher, ok := g.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	} else {
+		return fmt.Errorf("streaming unsupported")
+	}
+
+	return nil
+}
+
+func (g *AuthGuardContext) ReturnError(status int, message string) error {
+	g.ResponseWriter.WriteHeader(status)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  status,
-		Message: statusErrorMap[status],
-		Error:   err,
-	}
-
-	if len(detail) > 0 {
-		response.Data = detail[0]
-	}
-
-	return g.FiberCtx.Status(status).JSON(response)
+		Message: message,
+	})
 }
 
-func (g *AuthGuardContext) ReturnSuccess(
-	data interface{},
-) error {
-	return g.FiberCtx.Status(http.StatusOK).JSON(dto.DefaultResponse{
+func (g *AuthGuardContext) ReturnSuccess(data interface{}) error {
+	g.ResponseWriter.WriteHeader(http.StatusOK)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  http.StatusOK,
 		Message: "OK",
 		Data:    data,
 	})
 }
 
-func (g *AuthGuardContext) ReturnCreated(
-	data interface{},
-) error {
-	return g.FiberCtx.Status(http.StatusCreated).JSON(dto.DefaultResponse{
+func (g *AuthGuardContext) ReturnCreated(data interface{}) error {
+	g.ResponseWriter.WriteHeader(http.StatusOK)
+	return json.NewEncoder(g.ResponseWriter).Encode(dto.DefaultResponse{
 		Status:  http.StatusCreated,
 		Message: "Created",
 		Data:    data,
 	})
 }
 
-func (g *AuthGuardContext) ReturnHTML(htmlContent string) error {
-	g.FiberCtx.Set("Content-Type", "text/html; charset=utf-8")
-	return g.FiberCtx.Status(http.StatusOK).SendString(htmlContent)
+func (g *AuthGuardContext) ReturnEvent(data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(g.ResponseWriter, "data: %s\n\n", jsonData)
+	if err != nil {
+		return err // Handle writing errors
+	}
+
+	if flusher, ok := g.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	} else {
+		return fmt.Errorf("streaming unsupported")
+	}
+
+	return nil
 }
 
-func DefaultGuard(handlerFunc func(g *GuardContext) error) fiber.Handler {
-	return func(ctx *fiber.Ctx) error {
+func DefaultGuard(handlerFunc func(g *GuardContext) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		guardCtx := GuardContext{
-			FiberCtx: ctx,
+			ResponseWriter: w,
+			Request:        r,
 		}
-		return handlerFunc(&guardCtx)
+		if err := handlerFunc(&guardCtx); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
 }
 
-func AuthGuard(cfg *config.Config, handlerFunc func(g *AuthGuardContext) error) []fiber.Handler {
-	handlers := []fiber.Handler{
-		jwtware.New(jwtware.Config{
-			SigningKey: jwtware.SigningKey{
-				Key: []byte(cfg.Secrets.JWTSecret),
-			},
-			ErrorHandler: func(c *fiber.Ctx, err error) error {
-				return c.Status(fiber.StatusUnauthorized).JSON(dto.DefaultResponse{
-					Status:  http.StatusUnauthorized,
-					Message: statusErrorMap[http.StatusUnauthorized],
-					Error:   "Tidak ada autentikasi",
-				})
-			},
-		}),
-		func(ctx *fiber.Ctx) error {
-			user := ctx.Locals("user").(*jwt.Token)
-			claims := user.Claims.(jwt.MapClaims)
-			expireAt, err := claims.GetExpirationTime()
-			if err != nil {
-				return ctx.Status(http.StatusUnauthorized).JSON(dto.DefaultResponse{
-					Status:  http.StatusUnauthorized,
-					Message: statusErrorMap[http.StatusUnauthorized],
-					Error:   "Sesi anda telah berakhir",
-				})
+func AuthGuard(cfg *config.Config, handlerFunc func(g *AuthGuardContext) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Unauthorized - No token provided", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer"))
+		if tokenString == "" {
+			http.Error(w, "Unauthorized - Invalid token format", http.StatusUnauthorized)
+			return
+		}
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			issuedAt, err := claims.GetIssuedAt()
-			if err != nil {
-				return ctx.Status(http.StatusUnauthorized).JSON(dto.DefaultResponse{
-					Status:  http.StatusUnauthorized,
-					Message: statusErrorMap[http.StatusUnauthorized],
-					Error:   "Sesi anda telah berakhir",
-				})
-			}
-			userID, ok := claims["user_id"].(string)
-			if !ok {
-				return ctx.Status(http.StatusUnauthorized).JSON(dto.DefaultResponse{
-					Status:  http.StatusUnauthorized,
-					Message: statusErrorMap[http.StatusUnauthorized],
-					Error:   "Tidak terautentikasi",
-				})
-			}
-			ety := entity.JWTClaim{
+			return []byte(cfg.Secrets.JWTSecret), nil
+		})
+
+		if err != nil || !token.Valid {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		userID, ok := claims["user_id"].(string)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		authGuardCtx := AuthGuardContext{
+			ResponseWriter: w,
+			Request:        r,
+			Claims: entity.JWTClaim{
 				UserID: userID,
-				RegisteredClaims: jwt.RegisteredClaims{
-					ExpiresAt: expireAt,
-					IssuedAt:  issuedAt,
-				},
-			}
-			authGuardCtx := AuthGuardContext{
-				FiberCtx: ctx,
-				Claims:   ety,
-			}
-			return handlerFunc(&authGuardCtx)
-		},
+			},
+		}
+
+		if err := handlerFunc(&authGuardCtx); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
-	return handlers
+}
+
+func BodyParser(r *http.Request, v interface{}) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	return decoder.Decode(v)
+}
+
+func IsMethod(r *http.Request, method string) bool {
+	return r.Method == method
+}
+
+func GetParam(r *http.Request, key string) string {
+	vars := mux.Vars(r)
+	return vars[key]
 }

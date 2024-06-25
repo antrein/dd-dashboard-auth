@@ -6,10 +6,11 @@ import (
 	validate "antrein/dd-dashboard-auth/internal/utils/validator"
 	"antrein/dd-dashboard-auth/model/config"
 	"antrein/dd-dashboard-auth/model/dto"
+	"context"
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gorilla/mux"
 )
 
 type Router struct {
@@ -26,21 +27,26 @@ func New(cfg *config.Config, usecase *auth.Usecase, vld *validator.Validate) *Ro
 	}
 }
 
-func (r *Router) RegisterRoute(app *fiber.App) {
-	g := app.Group("/bc/dashboard/auth")
-	g.Post("/register", guard.DefaultGuard(r.RegisterTenant))
-	g.Post("/login", guard.DefaultGuard(r.LoginTenantAccount))
+func (r *Router) RegisterRoute(app *mux.Router) {
+	app.HandleFunc("/dd/dashboard/auth/register", guard.DefaultGuard(r.RegisterTenant))
+	app.HandleFunc("/dd/dashboard/auth/login", guard.DefaultGuard(r.LoginTenantAccount))
 }
 
 func (r *Router) RegisterTenant(g *guard.GuardContext) error {
+	ok := guard.IsMethod(g.Request, "POST")
+	if !ok {
+		return g.ReturnError(http.StatusMethodNotAllowed, "Method not allowed")
+	}
 	req := dto.CreateTenantRequest{}
 
-	err := g.FiberCtx.BodyParser(&req)
+	err := guard.BodyParser(g.Request, &req)
 	if err != nil {
 		return g.ReturnError(http.StatusBadRequest, "Request tidak sesuai format")
 	}
 
-	err = r.vld.StructCtx(g.FiberCtx.Context(), &req)
+	ctx := context.Background()
+
+	err = r.vld.StructCtx(ctx, &req)
 	if err != nil {
 		return g.ReturnError(http.StatusBadRequest, "Request tidak sesuai format")
 	}
@@ -50,7 +56,6 @@ func (r *Router) RegisterTenant(g *guard.GuardContext) error {
 		return g.ReturnError(http.StatusBadRequest, err.Error())
 	}
 
-	ctx := g.FiberCtx.Context()
 	resp, errRes := r.usecase.RegisterNewTenant(ctx, req)
 	if errRes != nil {
 		return g.ReturnError(errRes.Status, errRes.Error)
@@ -60,19 +65,24 @@ func (r *Router) RegisterTenant(g *guard.GuardContext) error {
 }
 
 func (r *Router) LoginTenantAccount(g *guard.GuardContext) error {
+	ok := guard.IsMethod(g.Request, "POST")
+	if !ok {
+		return g.ReturnError(http.StatusMethodNotAllowed, "Method not allowed")
+	}
 	req := dto.LoginRequest{}
 
-	err := g.FiberCtx.BodyParser(&req)
+	err := guard.BodyParser(g.Request, &req)
 	if err != nil {
 		return g.ReturnError(http.StatusBadRequest, "Request tidak sesuai format")
 	}
 
-	err = r.vld.StructCtx(g.FiberCtx.Context(), &req)
+	ctx := context.Background()
+
+	err = r.vld.StructCtx(ctx, &req)
 	if err != nil {
 		return g.ReturnError(http.StatusBadRequest, "Request tidak sesuai format")
 	}
 
-	ctx := g.FiberCtx.Context()
 	resp, errRes := r.usecase.LoginTenantAccount(ctx, req)
 	if errRes != nil {
 		return g.ReturnError(errRes.Status, errRes.Error)
