@@ -3,6 +3,8 @@ package grpc
 import (
 	"antrein/dd-dashboard-auth/application/common/resource"
 	"antrein/dd-dashboard-auth/application/common/usecase"
+	"antrein/dd-dashboard-auth/internal/handler/grpc/auth"
+
 	"antrein/dd-dashboard-auth/model/config"
 	"context"
 
@@ -24,6 +26,10 @@ func ApplicationDelegate(cfg *config.Config, uc *usecase.CommonUsecase, rsc *res
 	// Hello service
 	helloServer := &helloServer{}
 	pb.RegisterGreeterServer(grpcServer, helloServer)
+
+	// Project config service
+	authConfigServer := auth.New(cfg)
+	pb.RegisterAuthServiceServer(grpcServer, authConfigServer)
 
 	return grpcServer, nil
 }
